@@ -1,7 +1,7 @@
 import type { Tier } from "./apiKey";
 import { getRedisClient, isRedisEnabled } from "../cache/redisCache";
 
-// Sliding-window limits in requests per minute per tier
+/** Sliding-window limits in requests per minute per tier. */
 const TIER_LIMITS: Record<Tier, number> = {
   free: 60,
   partner: 5000,
@@ -11,18 +11,19 @@ const RATE_LIMIT_KEY_PREFIX = "oa:rl:";
 const WINDOW_MS = 60_000;
 const WINDOW_SECONDS = 60;
 
-// In-memory fallback store: hashedKey -> timestamps of recent requests.
-// Entries are created on demand and removed when all timestamps fall outside
-// the sliding window, so the Map does not grow without bound.
+/**
+ * In-memory fallback store: hashedKey -> timestamps of recent requests.
+ * Entries are created on demand and removed when all timestamps fall outside
+ * the sliding window, so the Map does not grow without bound.
+ */
 const buckets = new Map<string, number[]>();
 
 /**
  * Prune all empty or fully expired bucket entries from the in-memory Map.
  */
 export function pruneExpiredBuckets(now: number = Date.now()): void {
-  const windowMs = 60_000;
   for (const [key, bucket] of buckets.entries()) {
-    while (bucket.length > 0 && bucket[0] <= now - windowMs) {
+    while (bucket.length > 0 && bucket[0] <= now - WINDOW_MS) {
       bucket.shift();
     }
     if (bucket.length === 0) {
@@ -31,16 +32,12 @@ export function pruneExpiredBuckets(now: number = Date.now()): void {
   }
 }
 
-/**
- * Get count of active bucket keys in memory (for testing/inspection).
- */
+/** Count of active bucket keys in memory (for testing/inspection). */
 export function _getBucketsSize(): number {
   return buckets.size;
 }
 
-/**
- * Clear in-memory rate limit buckets (for testing).
- */
+/** Clear in-memory rate limit buckets (for testing). */
 export function _clearBuckets(): void {
   buckets.clear();
 }
@@ -56,6 +53,7 @@ function warnInMemoryFallback(reason: string): void {
   );
 }
 
+// Module-load warning: must run at import time, not inside a test helper.
 if (!isRedisEnabled()) {
   warnInMemoryFallback("REDIS_URL is not configured");
 }
@@ -108,41 +106,10 @@ function checkInMemRateLimit(
   };
 }
 
-async function checkRateLimitRedis(hashedKey: string, limit: number): Promise<RateLimitResult> {
-  const client = getRedisClient();
-  if (!client) {
-    throw new Error("Redis client unavailable");
-  }
-
-  const key = `${RATE_LIMIT_KEY_PREFIX}${hashedKey}`;
-  const now = Date.now();
-  const windowStart = now - WINDOW_MS;
-
-  await client.zremrangebyscore(key, 0, windowStart);
-  const count = await client.zcard(key);
-
-  const allowed = count < limit;
-  if (allowed) {
-    const member = `${now}-${Math.random().toString(36).slice(2, 10)}`;
-    await client.zadd(key, now, member);
-    await client.expire(key, WINDOW_SECONDS);
-  }
-
-  let retryAfter: number | undefined;
-  if (!allowed) {
-    const oldest = await client.zrange(key, 0, 0, "WITHSCORES");
-    const oldestScore = oldest.length > 1 ? Number(oldest[1]) : now;
-    retryAfter = Math.max(1, Math.ceil((oldestScore + WINDOW_MS - now) / 1000));
-  }
-
-  return {
-    allowed,
-    limit,
-    remaining: Math.max(0, limit - (allowed ? count + 1 : count)),
-    retryAfter,
-  };
-}
-
+/**
+ * Redis sorted-set sliding window (shared across instances).
+ * Uses a short pipeline for prune+count, then a second pipeline to record.
+ */
 async function checkRedisRateLimit(
   hashedKey: string,
   tier: Tier,
@@ -154,9 +121,8 @@ async function checkRedisRateLimit(
   }
 
   const limit = TIER_LIMITS[tier];
-  const windowMs = 60_000;
-  const key = `oa:rl:${hashedKey}`;
-  const clearBefore = now - windowMs;
+  const key = `${RATE_LIMIT_KEY_PREFIX}${hashedKey}`;
+  const clearBefore = now - WINDOW_MS;
   const member = `${now}:${Math.random().toString(36).substring(2, 9)}`;
 
   const pipeline = redis.pipeline();
@@ -179,7 +145,7 @@ async function checkRedisRateLimit(
   if (allowed) {
     const addPipeline = redis.pipeline();
     addPipeline.zadd(key, now, member);
-    addPipeline.expire(key, 60);
+    addPipeline.expire(key, WINDOW_SECONDS);
     await addPipeline.exec();
   }
 
@@ -191,9 +157,9 @@ async function checkRedisRateLimit(
     const oldestScores = await redis.zrange(key, 0, 0, "WITHSCORES");
     if (oldestScores && oldestScores.length >= 2) {
       const oldestTs = parseFloat(oldestScores[1]);
-      retryAfter = Math.ceil((oldestTs + windowMs - now) / 1000);
+      retryAfter = Math.ceil((oldestTs + WINDOW_MS - now) / 1000);
     } else {
-      retryAfter = 60;
+      retryAfter = WINDOW_SECONDS;
     }
   }
 
@@ -201,7 +167,7 @@ async function checkRedisRateLimit(
     allowed,
     limit,
     remaining,
-    retryAfter: allowed ? undefined : Math.max(1, retryAfter ?? 60),
+    retryAfter: allowed ? undefined : Math.max(1, retryAfter ?? WINDOW_SECONDS),
   };
 }
 
@@ -232,7 +198,11 @@ export async function checkRateLimit(
     try {
       return await checkRedisRateLimit(hashedKey, tier, now);
     } catch (err) {
-      console.warn("[rateLimit] Redis rate limiter error, falling back to in-memory:", err);
+      console.warn(
+        "[rateLimit] Redis rate limiter error, falling back to in-memory:",
+        err
+      );
+      warnInMemoryFallback("Redis command failed");
     }
   }
   return checkInMemRateLimit(hashedKey, tier, now);
