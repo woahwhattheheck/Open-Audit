@@ -131,6 +131,17 @@ export interface TranslatedEvent {
    * e.g. "v2". Null when the blueprint has no version label.
    */
   schemaVersion: string | null;
+  /**
+   * Provenance of the translator that produced this event.
+   * - "native": reviewed TypeScript blueprint shipped in-repo
+   * - "community-wasm": untrusted community parser executed in the WASM sandbox
+   * Defaults to "native" when omitted (back-compat for existing callers).
+   */
+  parserProvenance?: "native" | "community-wasm";
+  /**
+   * When a community-wasm parser failed inside the sandbox, the typed error code.
+   */
+  sandboxError?: string;
 }
 
 /**

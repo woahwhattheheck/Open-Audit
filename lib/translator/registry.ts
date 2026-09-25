@@ -147,7 +147,7 @@ export async function translateWithCache(
   const translated =
     hasPersistedTranslation(event) && event.status !== undefined
       ? buildTranslationFromPersisted(event)
-      : translateEvent(event, customBlueprints, lang);
+      : await translateEventAsync(event, customBlueprints, lang);
 
   if (event.txHash && event.id) {
     await setCachedTranslationIfAvailable(event, translated);
@@ -472,6 +472,10 @@ function applyBlueprint(event: RawEvent, blueprint: TranslationBlueprint, lang: 
   const result = blueprint.translate(event, lang);
   if (!result) return null;
 
+  const provenance =
+    (blueprint as { parserProvenance?: "native" | "community-wasm" }).parserProvenance ??
+    "native";
+
   return {
     raw: event,
     description: result.description ? sanitizeTextField(result.description) : null,
@@ -479,6 +483,7 @@ function applyBlueprint(event: RawEvent, blueprint: TranslationBlueprint, lang: 
     blueprintName: blueprint.contractName,
     eventType: result.eventType ? sanitizeTextField(result.eventType, { maxLength: 64 }) : null,
     schemaVersion: (blueprint as any).version ?? null,
+    parserProvenance: provenance,
   };
 }
 
@@ -518,6 +523,35 @@ export function matchesEventCriteria(
   }
 
   return true;
+}
+
+/**
+ * Async translation path used when a community-wasm blueprint may be selected.
+ * Native blueprints still resolve synchronously inside this helper.
+ */
+export async function translateEventAsync(
+  event: RawEvent,
+  customBlueprints?: Map<string, TranslationBlueprint>,
+  lang: Language = "en"
+): Promise<TranslatedEvent> {
+  const schema = resolveSchema(event.contractId, event.ledger, customBlueprints);
+  const blueprint = schema?.blueprint;
+  if (
+    blueprint &&
+    (blueprint as { parserProvenance?: string }).parserProvenance === "community-wasm" &&
+    (blueprint as { wasmBytes?: Uint8Array }).wasmBytes instanceof Uint8Array
+  ) {
+    const { translateWithCommunityParser, isCommunityWasmBlueprint } = await import(
+      "../wasm-sandbox/community-registry"
+    );
+    if (isCommunityWasmBlueprint(blueprint)) {
+      return translateWithCommunityParser(
+        event,
+        blueprint as TranslationBlueprint & { wasmBytes: Uint8Array }
+      );
+    }
+  }
+  return translateEvent(event, customBlueprints, lang);
 }
 
 /**
@@ -615,6 +649,21 @@ export function getBlueprintCount(): number {
  * Call this to add or upgrade a contract's translation schemas without
  * rebuilding the singleton. The blueprint list is re-sorted after insertion.
  */
+
+/**
+ * Removes a contract's schemas from the registry (used by community-parser tests
+ * and hot-reload of sandboxed parsers).
+ */
+export function unregisterBlueprint(contractId: string): boolean {
+  const existed = REGISTRY.delete(contractId);
+  RESOLUTION_CACHE.forEach((_, key) => {
+    if (key.startsWith(`${contractId}:`)) {
+      RESOLUTION_CACHE.delete(key);
+    }
+  });
+  return existed;
+}
+
 export function registerBlueprint(...blueprints: TranslationBlueprint[]): void {
   for (const blueprint of blueprints) {
     const versioned = blueprint as VersionedTranslationBlueprint;
