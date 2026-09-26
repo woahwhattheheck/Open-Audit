@@ -116,6 +116,8 @@ describe("Redis primary path", () => {
   function mockRedisClient(opts: {
     count: number;
     oldestScore?: number;
+    pruneError?: Error;
+    writeError?: Error;
   }) {
     const members: Array<{ member: string; score: number }> = [];
     for (let i = 0; i < opts.count; i++) {
@@ -127,7 +129,7 @@ describe("Redis primary path", () => {
         const ops: Array<() => [Error | null, unknown]> = [];
         return {
           zremrangebyscore: () => {
-            ops.push(() => [null, 0]);
+            ops.push(() => [opts.pruneError ?? null, 0]);
             return undefined;
           },
           zcard: () => {
@@ -137,7 +139,7 @@ describe("Redis primary path", () => {
           zadd: (_key: string, score: number, member: string) => {
             ops.push(() => {
               members.push({ member, score });
-              return [null, 1];
+              return [opts.writeError ?? null, 1];
             });
             return undefined;
           },
@@ -169,6 +171,20 @@ describe("Redis primary path", () => {
     expect(res.remaining).toBe(59);
     // Must not have fallen back to in-memory for a successful Redis call
     expect(_getBucketsSize()).toBe(0);
+  });
+
+  it.each([
+    ["prune", { pruneError: new Error("prune failed") }],
+    ["write", { writeError: new Error("write failed") }],
+  ])("falls back when the Redis %s command fails", async (label, failure) => {
+    vi.spyOn(redisCache, "isRedisEnabled").mockReturnValue(true);
+    vi.spyOn(redisCache, "getRedisClient").mockReturnValue(
+      mockRedisClient({ count: 0, ...failure }) as never
+    );
+
+    const res = await checkRateLimit(`redis-${label}-failure`, "free");
+    expect(res.allowed).toBe(true);
+    expect(_getBucketsSize()).toBe(1);
   });
 
   it("blocks via Redis when the window is already full", async () => {
