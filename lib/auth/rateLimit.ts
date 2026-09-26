@@ -130,23 +130,30 @@ async function checkRedisRateLimit(
   pipeline.zcard(key);
   const results = await pipeline.exec();
 
-  if (!results) {
-    throw new Error("Redis pipeline returned null");
+  if (!results || results.length !== 2) {
+    throw new Error("Redis count pipeline returned incomplete results");
+  }
+  for (const [error] of results) {
+    if (error) throw error;
   }
 
-  const zcardRes = results[1];
-  if (zcardRes[0]) {
-    throw zcardRes[0];
+  const currentCount = results[1][1] as number;
+  if (!Number.isInteger(currentCount) || currentCount < 0) {
+    throw new Error("Redis returned an invalid rate-limit count");
   }
-
-  const currentCount = zcardRes[1] as number;
   const allowed = currentCount < limit;
 
   if (allowed) {
     const addPipeline = redis.pipeline();
     addPipeline.zadd(key, now, member);
     addPipeline.expire(key, WINDOW_SECONDS);
-    await addPipeline.exec();
+    const writeResults = await addPipeline.exec();
+    if (!writeResults || writeResults.length !== 2) {
+      throw new Error("Redis write pipeline returned incomplete results");
+    }
+    for (const [error] of writeResults) {
+      if (error) throw error;
+    }
   }
 
   const newCount = allowed ? currentCount + 1 : currentCount;
