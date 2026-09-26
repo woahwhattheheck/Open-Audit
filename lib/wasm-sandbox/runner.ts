@@ -10,7 +10,7 @@
  */
 
 import { Worker } from "worker_threads";
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 import path from "path";
 import {
   DEFAULT_SANDBOX_LIMITS,
@@ -21,7 +21,8 @@ import {
   WasmExecutionError,
   type WasmErrorType,
 } from "./types";
-import { validateWasmModule } from "./validate-module";
+
+const MAX_WASM_MODULE_BYTES = 8 * 1024 * 1024;
 
 function resolveWorkerPath(): string {
   // Stable path from repo root (vitest / tsx / node all cwd = project root).
@@ -30,7 +31,6 @@ function resolveWorkerPath(): string {
 
 export class WasmSandboxRunner {
   private readonly limits: SandboxLimits;
-  private readonly moduleCache = new Map<string, WebAssembly.Module>();
 
   constructor(limits: Partial<SandboxLimits> = {}) {
     this.limits = { ...DEFAULT_SANDBOX_LIMITS, ...limits };
@@ -40,9 +40,8 @@ export class WasmSandboxRunner {
     return { ...this.limits };
   }
 
-  clearCache(): void {
-    this.moduleCache.clear();
-  }
+  /** Kept for callers; modules are compiled only inside their killable worker. */
+  clearCache(): void {}
 
   /**
    * Execute a community parser WASM module.
@@ -59,9 +58,7 @@ export class WasmSandboxRunner {
 
     try {
       this.validateInput(input);
-      const { bytes, cacheKey } = await this.loadBytes(wasm);
-      const module = await this.compile(bytes, cacheKey);
-      validateWasmModule(module);
+      const bytes = await this.loadBytes(wasm);
 
       const workerResult = await this.runInWorker(
         bytes,
@@ -117,14 +114,20 @@ export class WasmSandboxRunner {
     }
   }
 
-  private async loadBytes(
-    wasm: string | Uint8Array | Buffer
-  ): Promise<{ bytes: Uint8Array; cacheKey: string }> {
+  private async loadBytes(wasm: string | Uint8Array | Buffer): Promise<Uint8Array> {
+    let bytes: Uint8Array;
     if (typeof wasm === "string") {
       try {
-        const buf = await readFile(wasm);
-        return { bytes: new Uint8Array(buf), cacheKey: `path:${wasm}` };
+        const file = await stat(wasm);
+        if (file.size > MAX_WASM_MODULE_BYTES) {
+          throw new WasmExecutionError(
+            `WASM module exceeds ${MAX_WASM_MODULE_BYTES} bytes`,
+            "LOAD_FAILED"
+          );
+        }
+        bytes = new Uint8Array(await readFile(wasm));
       } catch (error) {
+        if (error instanceof WasmExecutionError) throw error;
         throw new WasmExecutionError(
           `Failed to load WASM from ${wasm}: ${
             error instanceof Error ? error.message : String(error)
@@ -133,32 +136,16 @@ export class WasmSandboxRunner {
           error
         );
       }
+    } else {
+      bytes = wasm instanceof Buffer ? new Uint8Array(wasm) : wasm;
     }
-    const bytes = wasm instanceof Buffer ? new Uint8Array(wasm) : wasm;
-    // Content-addressed cache key (length + first/last bytes — enough for fixtures).
-    const key = `bytes:${bytes.length}:${bytes[0] ?? 0}:${bytes[bytes.length - 1] ?? 0}`;
-    return { bytes, cacheKey: key };
-  }
-
-  private async compile(
-    bytes: Uint8Array,
-    cacheKey: string
-  ): Promise<WebAssembly.Module> {
-    const cached = this.moduleCache.get(cacheKey);
-    if (cached) return cached;
-    try {
-      const module = await WebAssembly.compile(bytes);
-      this.moduleCache.set(cacheKey, module);
-      return module;
-    } catch (error) {
+    if (bytes.byteLength > MAX_WASM_MODULE_BYTES) {
       throw new WasmExecutionError(
-        `Failed to compile WASM: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "INSTANTIATION_FAILED",
-        error
+        `WASM module exceeds ${MAX_WASM_MODULE_BYTES} bytes`,
+        "LOAD_FAILED"
       );
     }
+    return bytes;
   }
 
   private validateInput(input: WasmParserInput): void {
