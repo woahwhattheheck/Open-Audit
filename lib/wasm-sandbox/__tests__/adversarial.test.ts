@@ -41,6 +41,23 @@ describe("WASM sandbox adversarial suite (#405)", () => {
     }
   });
 
+  it("rejects a hidden private memory alongside env.memory", async () => {
+    // Valid WASM with one imported env.memory and one unexported defined memory.
+    // Module.imports/exports alone cannot reveal the second memory.
+    const bytes = Uint8Array.from([
+      0, 97, 115, 109, 1, 0, 0, 0,
+      2, 16, 1, 3, 101, 110, 118, 6, 109, 101, 109, 111, 114, 121, 2, 1, 1, 1,
+      5, 4, 1, 1, 1, 1,
+    ]);
+    await expect(WebAssembly.compile(bytes)).resolves.toBeDefined();
+    const result = await runner.execute(bytes, SAMPLE_EVENT_INPUT);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.errorType).toBe("FORBIDDEN_IMPORTS");
+      expect(result.error.message).toMatch(/defined memory/);
+    }
+  });
+
   it("contains out-of-bounds memory access traps", async () => {
     const result = await runner.execute(
       loadFixture("oob_read.wasm"),
