@@ -23,8 +23,8 @@ TypeScript blueprints, without granting those parsers any ability to:
 | Choice | Rationale |
 |--------|-----------|
 | **Node.js built-in `WebAssembly`** | No third-party native addon; available everywhere we already run. |
-| **`worker_threads` Worker** | Only reliable way to **force-terminate** a runaway guest (infinite loop). Wall-clock timeout → `worker.terminate()`. |
-| **Host-provided `env.memory`** | Guest cannot declare an unbounded memory; host sets `Memory({ maximum })`. |
+| **`worker_threads` Worker** | Guest compilation and execution happen inside a killable worker. Wall-clock timeout → `worker.terminate()`; the caller does not compile untrusted bytes on the main thread. |
+| **Host-provided `env.memory`** | Worker requires exactly one memory import and rejects any defined memory section, including unexported private memory. Host sets `Memory({ maximum })`. |
 | **No WASI** | WASI is ambient capability (fd, path, clock, random, …). Forbidden. |
 
 We deliberately do **not** use Wasmtime/Wasmer Node bindings in this revision:
@@ -58,14 +58,14 @@ Anything else (missing fields, non-JSON, oversized) is rejected by the host.
 
 | # | Attacker goal | Mitigation | Test |
 |---|---------------|------------|------|
-| T1 | **RCE / call Node APIs** (`fs`, `net`, `child_process`, `eval`) | Guest has **no** JS imports. Only `env.memory`. Module import table validated before instantiate (host + worker). | `fs_attempt.wasm` → `FORBIDDEN_IMPORTS` |
+| T1 | **RCE / call Node APIs** (`fs`, `net`, `child_process`, `eval`) | Guest has **no** JS function imports. Worker validates the exact `env.memory` import before instantiation. | `fs_attempt.wasm` → `FORBIDDEN_IMPORTS` |
 | T2 | **WASI ambient caps** (fs, sockets, env) | Any import other than `env.memory` rejected. | `wasi_attempt.wasm` → `FORBIDDEN_IMPORTS` |
 | T3 | **Infinite loop / CPU exhaustion** | Worker wall-clock timeout; `worker.terminate()`. | `infinite_loop.wasm` → `TIMEOUT_EXCEEDED`; host process stays alive |
-| T4 | **Memory exhaustion** | Host `Memory({ maximum: maxMemoryPages })`. Guest `memory.grow` fails then traps; contained in worker. | `memory_bomb.wasm` → `RUNTIME_TRAP` / contained |
+| T4 | **Memory exhaustion** | Host `Memory({ maximum: maxMemoryPages })`; worker also rejects a hidden guest-defined memory section. | `memory_bomb.wasm` and a valid dual-memory module → rejected/contained |
 | T5 | **Out-of-bounds memory access** | WASM traps on OOB; worker catches and reports `RUNTIME_TRAP`. | `oob_read.wasm` |
 | T6 | **Malformed / weaponized output** | Host JSON-parses and schema-checks `description` + `eventType`; size cap. | `malformed_output.wasm`, `oversized_output.wasm` → `INVALID_OUTPUT` |
 | T7 | **Exfiltrate host data via imports** | No host functions that read host state are imported. Linear memory is guest-only scratch. | Capability tests assert import allow-list size === 1 |
-| T8 | **Crash the host process** | All execution in a Worker; traps/panics stay in-worker. | Every adversarial case asserts the runner returns a typed error (does not throw uncaught to the test process) |
+| T8 | **Crash the host process** | Compilation and execution happen in a Worker, with an 8 MiB module-size cap before worker spawn; traps/panics return typed errors. | Adversarial cases assert errors do not escape into the caller |
 | T9 | **Confused deputy via sync API** | Sync `translate()` on community blueprints returns `null`; only `translateEventAsync` / `translateWithCache` run WASM. | Registry integration test |
 | T10 | **UI confusion (native vs community)** | `TranslatedEvent.parserProvenance = "community-wasm"` when sandboxed. | Registry integration test |
 
@@ -73,7 +73,7 @@ Anything else (missing fields, non-JSON, oversized) is rejected by the host.
 
 | Resource | Default | Config |
 |----------|---------|--------|
-| Memory | 256 pages (16 MiB) | `SandboxLimits.maxMemoryPages` |
+| Module bytes | 8 MiB | Fixed pre-worker cap |\n| Memory | 256 pages (16 MiB) | `SandboxLimits.maxMemoryPages` |
 | CPU / wall time | 1000 ms | `SandboxLimits.maxExecutionTimeMs` |
 | Input JSON | 256 KiB | `SandboxLimits.maxInputBytes` |
 | Output JSON | 64 KiB | `SandboxLimits.maxOutputBytes` |
