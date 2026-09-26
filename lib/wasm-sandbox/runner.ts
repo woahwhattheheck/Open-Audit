@@ -41,7 +41,9 @@ export class WasmSandboxRunner {
   }
 
   /** Kept for callers; modules are compiled only inside their killable worker. */
-  clearCache(): void {}
+  clearCache(): void {
+    // No cached modules remain; each worker compiles the bytes it executes.
+  }
 
   /**
    * Execute a community parser WASM module.
