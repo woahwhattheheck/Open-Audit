@@ -44,6 +44,13 @@ export function validateWasmModule(module: WebAssembly.Module): void {
     );
   }
 
+  if (imports.length !== 1) {
+    throw new WasmExecutionError(
+      "WASM module must import exactly one host-provided env.memory.",
+      "FORBIDDEN_IMPORTS"
+    );
+  }
+
   const exports = WebAssembly.Module.exports(module);
   const exportNames = new Set(exports.map((e) => e.name));
   for (const required of REQUIRED_EXPORTS) {
