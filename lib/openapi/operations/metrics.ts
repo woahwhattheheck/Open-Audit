@@ -8,15 +8,8 @@ export const routeDoc: OperationDoc = {
     "When METRICS_TOKEN is set, also requires Authorization: Bearer <token>.",
   operationId: "getMetrics",
   tags: ["System"],
-  parameters: [
-    {
-      name: "authorization",
-      in: "header",
-      required: false,
-      description: "Bearer <METRICS_TOKEN> when METRICS_TOKEN is configured",
-      schema: { type: "string" },
-    },
-  ],
+  // buildOpenApiDocument supplies the configured security requirement.
+  // Authorization must use MetricsBearer; OpenAPI ignores it as a parameter.
   responses: {
     "200": {
       description: "Prometheus metrics body",

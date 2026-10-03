@@ -1,15 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import OpenAPISchemaValidator from "openapi-schema-validator";
 import { buildOpenApiDocument } from "../build-spec";
-import {
-  filesystemRouteToOpenApiPath,
-  registryOpenApiPaths,
-  routeRegistry,
-} from "../registry";
+import { filesystemRouteToOpenApiPath, registryOpenApiPaths, routeRegistry } from "../registry";
 import fs from "node:fs";
 import path from "node:path";
 
 const API_ROOT = path.resolve(__dirname, "../../../app/api");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function listRouteFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -43,6 +43,31 @@ describe("OpenAPI specification (issue #416)", () => {
     const doc = buildOpenApiDocument();
     expect((doc.paths["/api/v1/stats"].get as any).security).toEqual([]);
   });
+
+  it.each([false, true])(
+    "validates metrics security with bearer protection configured=%s",
+    (configured) => {
+      vi.stubEnv("METRICS_TOKEN", configured ? "fixture-metrics-token" : "");
+      const doc = buildOpenApiDocument();
+      const operation = doc.paths["/api/metrics"].get as {
+        security: Array<Record<string, string[]>>;
+        parameters?: Array<{ in: string; name: string }>;
+      };
+
+      expect(operation.security).toEqual([
+        configured ? { ApiKeyAuth: [], MetricsBearer: [] } : { ApiKeyAuth: [] },
+      ]);
+      expect(
+        operation.parameters?.some(
+          (parameter) =>
+            parameter.in === "header" && parameter.name.toLowerCase() === "authorization"
+        ) ?? false
+      ).toBe(false);
+      const validator = new OpenAPISchemaValidator({ version: 3 });
+      const result = validator.validate(doc);
+      expect(result.errors, JSON.stringify(result.errors, null, 2)).toEqual([]);
+    }
+  );
 });
 
 describe("routeDoc drift prevention (issue #416)", () => {
@@ -54,14 +79,11 @@ describe("routeDoc drift prevention (issue #416)", () => {
     for (const file of routeFiles) {
       const src = fs.readFileSync(file, "utf8");
       const hasExport =
-        /export\s+const\s+routeDoc\b/.test(src) ||
-        /export\s*\{[^}]*\brouteDoc\b[^}]*\}/.test(src);
+        /export\s+const\s+routeDoc\b/.test(src) || /export\s*\{[^}]*\brouteDoc\b[^}]*\}/.test(src);
       if (!hasExport) missing.push(path.relative(process.cwd(), file));
     }
 
-    expect(missing, `routes missing routeDoc export:\n${missing.join("\n")}`).toEqual(
-      []
-    );
+    expect(missing, `routes missing routeDoc export:\n${missing.join("\n")}`).toEqual([]);
   });
 
   it("every filesystem route is covered by the OpenAPI registry", () => {
@@ -72,16 +94,13 @@ describe("routeDoc drift prevention (issue #416)", () => {
     for (const file of routeFiles) {
       const openApiPath = filesystemRouteToOpenApiPath(file);
       if (!registryPaths.has(openApiPath)) {
-        uncovered.push(
-          `${path.relative(process.cwd(), file)} → ${openApiPath}`
-        );
+        uncovered.push(`${path.relative(process.cwd(), file)} → ${openApiPath}`);
       }
     }
 
-    expect(
-      uncovered,
-      `filesystem routes missing from registry:\n${uncovered.join("\n")}`
-    ).toEqual([]);
+    expect(uncovered, `filesystem routes missing from registry:\n${uncovered.join("\n")}`).toEqual(
+      []
+    );
   });
 
   it("registry has no duplicate path+method pairs", () => {
@@ -98,10 +117,7 @@ describe("routeDoc drift prevention (issue #416)", () => {
 
 describe("middleware public routes (issue #416)", () => {
   it("allowlists /api/openapi and does not mention the mangled ingest path", () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, "../../../middleware.ts"),
-      "utf8"
-    );
+    const src = fs.readFileSync(path.resolve(__dirname, "../../../middleware.ts"), "utf8");
     expect(src).toContain('"/api/openapi"');
     expect(src).not.toContain("/api/ingest-historical/openapi");
   });

@@ -46,9 +46,7 @@ function expandEntry(
 /**
  * Assemble a valid OpenAPI 3.0 document from every registered routeDoc.
  */
-export function buildOpenApiDocument(
-  entries: RegistryEntry[] = routeRegistry
-): OpenApiDocument {
+export function buildOpenApiDocument(entries: RegistryEntry[] = routeRegistry): OpenApiDocument {
   const paths: OpenApiDocument["paths"] = {};
 
   for (const entry of entries) {
@@ -57,7 +55,16 @@ export function buildOpenApiDocument(
       if (paths[path][method]) {
         throw new Error(`Duplicate OpenAPI operation ${method.toUpperCase()} ${path}`);
       }
-      paths[path][method] = operation;
+      // Metrics has an additional deployment-dependent bearer check after the
+      // middleware API key. Keep both schemes in one requirement (AND), and
+      // evaluate the same configuration as the handler for each served spec.
+      if (path === "/api/metrics" && method === "get") {
+        const requirement: Record<string, string[]> = { ApiKeyAuth: [] };
+        if (process.env.METRICS_TOKEN) requirement.MetricsBearer = [];
+        paths[path][method] = { ...operation, security: [requirement] };
+      } else {
+        paths[path][method] = operation;
+      }
     }
   }
 
