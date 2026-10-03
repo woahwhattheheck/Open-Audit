@@ -42,6 +42,7 @@ import type {
   RawEvent,
   TranslatedEvent,
   TranslationBlueprint,
+  CommunityWasmBlueprint,
   VersionedTranslationBlueprint,
   Language,
   ContractSchema,
@@ -541,21 +542,16 @@ export async function translateEventAsync(
   lang: Language = "en"
 ): Promise<TranslatedEvent> {
   const schema = resolveSchema(event.contractId, event.ledger, customBlueprints);
-  const blueprint = schema?.blueprint;
+  const blueprint = schema?.blueprint as Partial<CommunityWasmBlueprint> | undefined;
   if (
     blueprint &&
-    (blueprint as { parserProvenance?: string }).parserProvenance === "community-wasm" &&
-    (blueprint as { wasmBytes?: Uint8Array }).wasmBytes instanceof Uint8Array
+    blueprint.parserProvenance === "community-wasm" &&
+    blueprint.wasmBytes instanceof Uint8Array &&
+    typeof blueprint.translateAsync === "function"
   ) {
-    const { translateWithCommunityParser, isCommunityWasmBlueprint } = await import(
-      "../wasm-sandbox/community-registry"
-    );
-    if (isCommunityWasmBlueprint(blueprint)) {
-      return translateWithCommunityParser(
-        event,
-        blueprint as TranslationBlueprint & { wasmBytes: Uint8Array }
-      );
-    }
+    // Registration supplies the server adapter; this shared registry must not
+    // import the filesystem or worker runtime into browser translation callers.
+    return blueprint.translateAsync(event);
   }
   return translateEvent(event, customBlueprints, lang);
 }

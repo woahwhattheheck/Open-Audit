@@ -10,6 +10,7 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import type {
+  CommunityWasmBlueprint,
   Language,
   RawEvent,
   TranslationBlueprint,
@@ -21,7 +22,6 @@ import { sanitizeTextField } from "../translator/core";
 import { WasmSandboxRunner } from "./runner";
 import type {
   CommunityParserManifest,
-  ParserProvenance,
   WasmParserInput,
 } from "./types";
 import { WasmExecutionError } from "./types";
@@ -29,10 +29,7 @@ import { WasmExecutionError } from "./types";
 export interface RegisteredCommunityParser {
   manifest: CommunityParserManifest;
   wasmBytes: Uint8Array;
-  blueprint: TranslationBlueprint & {
-    parserProvenance: ParserProvenance;
-    wasmBytes: Uint8Array;
-  };
+  blueprint: CommunityWasmBlueprint;
 }
 
 const COMMUNITY = new Map<string, RegisteredCommunityParser>();
@@ -75,16 +72,16 @@ export function registerCommunityParserFromBytes(
   wasmBytes: Uint8Array,
   runner: WasmSandboxRunner = defaultRunner
 ): RegisteredCommunityParser {
-  const blueprint: TranslationBlueprint & {
-    parserProvenance: ParserProvenance;
-    wasmBytes: Uint8Array;
-  } = {
+  const blueprint: CommunityWasmBlueprint = {
     contractId: manifest.contractId,
     contractName: manifest.contractName,
     parserProvenance: "community-wasm",
     wasmBytes,
     // Sync path cannot run the worker sandbox; return null so callers use async.
     translate: (_event: RawEvent, _lang: Language): TranslationResult | null => null,
+    translateAsync(event: RawEvent): Promise<TranslatedEvent> {
+      return translateWithCommunityParser(event, blueprint);
+    },
   };
 
   // Attach a non-enumerable runner ref for async translation.

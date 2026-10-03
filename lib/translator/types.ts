@@ -166,6 +166,14 @@ export interface TranslationBlueprint {
   translate: (event: RawEvent, lang: Language) => TranslationResult | null;
 }
 
+/** A community blueprint whose server adapter owns isolated WASM execution. */
+export interface CommunityWasmBlueprint extends TranslationBlueprint {
+  parserProvenance: "community-wasm";
+  wasmBytes: Uint8Array;
+  /** Returns the sandbox result, including provenance and any sandbox error. */
+  translateAsync: (event: RawEvent) => Promise<TranslatedEvent>;
+}
+
 /**
  * A versioned schema for a contract, valid for a specific ledger range.
  */
