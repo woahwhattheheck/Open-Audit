@@ -28,7 +28,43 @@ export const routeDoc: OperationDoc = {
       description: "Streaming export body",
       content: {
         "text/csv": { schema: { type: "string" } },
-        "application/json": { schema: { type: "string" } },
+        "application/json": {
+          schema: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "timestamp",
+                "ledger_id",
+                "contract_id",
+                "tx_hash",
+                "event_name",
+                "status",
+                "plain_english_translation",
+                "proof_url",
+                "schema_version",
+              ],
+              properties: {
+                timestamp: { type: "string", format: "date-time" },
+                ledger_id: { type: "integer" },
+                contract_id: { type: "string" },
+                tx_hash: { type: "string" },
+                event_name: { type: "string" },
+                status: { type: "string" },
+                plain_english_translation: { type: "string" },
+                proof_url: {
+                  type: "string",
+                  description:
+                    "Relative proof URL, or an empty string when no transaction hash is available.",
+                },
+                schema_version: {
+                  type: "string",
+                  description: "Persisted schema version, or an empty string for legacy rows.",
+                },
+              },
+            },
+          },
+        },
         "application/x-ndjson": { schema: { type: "string" } },
       },
     },
