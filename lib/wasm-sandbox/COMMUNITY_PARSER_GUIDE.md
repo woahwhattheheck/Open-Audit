@@ -30,6 +30,14 @@ rejected by the host.
 (export "dealloc" (func (param i32 i32)))                 ;; optional
 ```
 
+The memory import may declare a different initial size and an optional maximum,
+for example `(memory 2 16)`. The host allocates the declared initial size only
+when it fits within its configured page limit. Its growth ceiling is the smaller
+of the host limit and the guest's declared maximum, when present. A minimum above
+the host limit returns `MEMORY_LIMIT_EXCEEDED` before memory allocation.
+Only unshared 32-bit memory is supported; shared memory, memory64, and additional
+defined memories are rejected.
+
 ### Input JSON (`WasmParserInput`)
 
 ```json

@@ -50,3 +50,65 @@ describe("WasmSandboxRunner happy path", () => {
     }
   });
 });
+
+describe("WasmSandboxRunner imported memory limits", () => {
+  it("honors a two-page imported minimum within an eight-page host cap", async () => {
+    const runner = new WasmSandboxRunner({
+      maxExecutionTimeMs: 2000,
+      maxMemoryPages: 8,
+    });
+
+    // Both the data segment and heap live in the second page.
+    const result = await runner.execute(
+      loadFixture("imported_memory_min2.wasm"),
+      SAMPLE_EVENT_INPUT
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output.eventType).toBe("transfer");
+      expect(result.output.description).toContain("Community parser");
+      expect(result.stats.peakMemoryBytes).toBe(2 * 64 * 1024);
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+
+  it("honors a one-page imported maximum below an eight-page host cap", async () => {
+    const runner = new WasmSandboxRunner({
+      maxExecutionTimeMs: 2000,
+      maxMemoryPages: 8,
+    });
+
+    // The guest traps unless memory.grow fails at its declared maximum.
+    const result = await runner.execute(
+      loadFixture("imported_memory_max1.wasm"),
+      SAMPLE_EVENT_INPUT
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output.eventType).toBe("transfer");
+      expect(result.output.description).toContain("Community parser");
+      expect(result.stats.peakMemoryBytes).toBe(64 * 1024);
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+
+  it("rejects a two-page imported minimum above a one-page host cap", async () => {
+    const runner = new WasmSandboxRunner({
+      maxExecutionTimeMs: 2000,
+      maxMemoryPages: 1,
+    });
+
+    const result = await runner.execute(
+      loadFixture("imported_memory_min2.wasm"),
+      SAMPLE_EVENT_INPUT
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.errorType).toBe("MEMORY_LIMIT_EXCEEDED");
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+});
