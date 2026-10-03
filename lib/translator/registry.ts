@@ -72,11 +72,12 @@ export function getResolutionCacheMax(): number {
   return RESOLUTION_CACHE_MAX;
 }
 
-/**
- * Interpolates a template string with values from an object.
- * e.g. "Hello {name}" + { name: "World" } -> "Hello World"
- */
-export type PersistedRawEvent = RawEvent & Partial<Pick<TranslatedEvent, "description" | "status" | "blueprintName" | "eventType" | "schemaVersion">>;
+/** A database/API event whose translation has already been computed. */
+export type PersistedRawEvent = RawEvent &
+  Partial<Pick<TranslatedEvent, "description" | "status" | "blueprintName" | "eventType" | "schemaVersion">> & {
+    parserProvenance?: TranslatedEvent["parserProvenance"] | null;
+    sandboxError?: string | null;
+  };
 
 function hasPersistedTranslation(event: PersistedRawEvent): boolean {
   return (
@@ -88,7 +89,7 @@ function hasPersistedTranslation(event: PersistedRawEvent): boolean {
   );
 }
 
-function buildTranslationFromPersisted(event: PersistedRawEvent): TranslatedEvent {
+export function buildTranslationFromPersisted(event: PersistedRawEvent): TranslatedEvent {
   return {
     raw: event,
     description: event.description ?? null,
@@ -96,6 +97,8 @@ function buildTranslationFromPersisted(event: PersistedRawEvent): TranslatedEven
     blueprintName: event.blueprintName ?? null,
     eventType: event.eventType ?? null,
     schemaVersion: event.schemaVersion ?? null,
+    ...(event.parserProvenance == null ? {} : { parserProvenance: event.parserProvenance }),
+    ...(event.sandboxError == null ? {} : { sandboxError: event.sandboxError }),
   };
 }
 
@@ -139,13 +142,16 @@ export async function translateWithCache(
   customBlueprints?: Map<string, TranslationBlueprint>,
   lang: Language = "en"
 ): Promise<TranslatedEvent> {
-  if (event.txHash && event.id) {
+  // Stored results are authoritative. An older cache entry may predate the
+  // persisted parser provenance or a subsequent sandbox failure.
+  const hasStoredTranslation = hasPersistedTranslation(event) && event.status !== undefined;
+  if (!hasStoredTranslation && event.txHash && event.id) {
     const cached = await getCachedTranslationIfAvailable(event);
     if (cached) return cached;
   }
 
   const translated =
-    hasPersistedTranslation(event) && event.status !== undefined
+    hasStoredTranslation
       ? buildTranslationFromPersisted(event)
       : await translateEventAsync(event, customBlueprints, lang);
 
