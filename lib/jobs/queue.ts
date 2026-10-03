@@ -39,6 +39,10 @@ export interface WebhookPayload {
   status: string;
   blueprintName: string | null;
   eventType: string | null;
+  /** Persisted parser origin; null for unknown legacy events. */
+  parserProvenance?: string | null;
+  /** Persisted sandbox failure code; null when no failure is retained. */
+  sandboxError?: string | null;
   createdAt: string;
 }
 
@@ -171,6 +175,8 @@ export async function triggerWebhooksForEvent(
     status: string;
     blueprintName?: string | null;
     eventType?: string | null;
+    parserProvenance?: string | null;
+    sandboxError?: string | null;
     createdAt?: Date | string;
   },
   options: DeliveryOptions = {}
@@ -216,6 +222,8 @@ export async function triggerWebhooksForEvent(
     status: event.status,
     blueprintName: event.blueprintName ?? null,
     eventType: event.eventType ?? null,
+    parserProvenance: event.parserProvenance ?? null,
+    sandboxError: event.sandboxError ?? null,
     createdAt:
       event.createdAt instanceof Date
         ? event.createdAt.toISOString()
