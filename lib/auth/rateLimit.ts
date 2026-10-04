@@ -115,7 +115,13 @@ function checkInMemRateLimit(
     if (!bucket) {
       bucket = [];
     }
-    bucket.push(now);
+    // Redis failures can finish out of request order. Keep the oldest timestamp
+    // first so expiry does not leave an expired request behind newer entries.
+    let insertAt = bucket.length;
+    while (insertAt > 0 && bucket[insertAt - 1] > now) {
+      insertAt--;
+    }
+    bucket.splice(insertAt, 0, now);
     buckets.set(hashedKey, bucket);
   }
 

@@ -114,6 +114,48 @@ describe("checkRateLimit", () => {
       expect(res.remaining).toBe(59);
       expect(_getBucketsSize()).toBe(1);
     });
+
+    it("expires older fallback requests even when Redis failures finish out of order", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(100_000);
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      let rejectOldest!: (reason: Error) => void;
+      const delayed = new Promise<never>((_resolve, reject) => {
+        rejectOldest = reject;
+      });
+      const client = {
+        eval: vi.fn()
+          .mockRejectedValue(new Error("Redis unavailable"))
+          .mockReturnValueOnce(delayed),
+      };
+      vi.spyOn(redisCache, "getRedisClient").mockReturnValue(client as never);
+
+      const oldestRequest = checkRateLimit("out-of-order-fallback", "free");
+      vi.setSystemTime(101_000);
+      for (let i = 0; i < 59; i++) {
+        expect((await checkRateLimit("out-of-order-fallback", "free")).allowed).toBe(true);
+      }
+      rejectOldest(new Error("The oldest Redis request failed last"));
+      expect((await oldestRequest).allowed).toBe(true);
+
+      vi.setSystemTime(160_000);
+      expect(await checkRateLimit("out-of-order-fallback", "free")).toEqual({
+        allowed: true,
+        limit: 60,
+        remaining: 0,
+        retryAfter: undefined,
+      });
+      expect(await checkRateLimit("out-of-order-fallback", "free")).toEqual({
+        allowed: false,
+        limit: 60,
+        remaining: 0,
+        retryAfter: 1,
+      });
+
+      vi.setSystemTime(161_000);
+      expect((await checkRateLimit("out-of-order-fallback", "free")).remaining).toBe(58);
+    });
   });
 });
 
