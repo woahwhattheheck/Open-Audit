@@ -35,7 +35,8 @@ export const eventSchema = {
     source: {
       type: "string",
       nullable: true,
-      enum: ["live", "historical"],
+      // nullable admits the type; enum must explicitly admit the legacy value too.
+      enum: ["live", "historical", null],
       description: "live indexer vs historical backfill; null = pre-migration",
     },
     createdAt: { type: "string", format: "date-time" },
