@@ -170,6 +170,8 @@ export interface TranslationBlueprint {
 export interface CommunityWasmBlueprint extends TranslationBlueprint {
   parserProvenance: "community-wasm";
   wasmBytes: Uint8Array;
+  /** Manifest version label retained in translated schema provenance. */
+  version?: string;
   /** Returns the sandbox result, including provenance and any sandbox error. */
   translateAsync: (event: RawEvent) => Promise<TranslatedEvent>;
 }

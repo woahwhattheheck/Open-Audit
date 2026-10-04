@@ -14,6 +14,7 @@ import type {
   Language,
   RawEvent,
   TranslationBlueprint,
+  VersionedTranslationBlueprint,
   TranslationResult,
   TranslatedEvent,
 } from "../translator/types";
@@ -75,6 +76,7 @@ export function registerCommunityParserFromBytes(
   const blueprint: CommunityWasmBlueprint = {
     contractId: manifest.contractId,
     contractName: manifest.contractName,
+    ...(manifest.version === undefined ? {} : { version: manifest.version }),
     parserProvenance: "community-wasm",
     wasmBytes,
     // Sync path cannot run the worker sandbox; return null so callers use async.
@@ -130,7 +132,7 @@ function toWasmInput(event: RawEvent): WasmParserInput {
  */
 export async function translateWithCommunityParser(
   event: RawEvent,
-  blueprint: TranslationBlueprint & { wasmBytes: Uint8Array },
+  blueprint: VersionedTranslationBlueprint & { wasmBytes: Uint8Array },
   runner?: WasmSandboxRunner
 ): Promise<TranslatedEvent> {
   const activeRunner =
@@ -149,7 +151,7 @@ export async function translateWithCommunityParser(
       status: "cryptic",
       blueprintName: blueprint.contractName,
       eventType: null,
-      schemaVersion: null,
+      schemaVersion: blueprint.version ?? null,
       parserProvenance: "community-wasm",
       sandboxError: result.error.errorType,
     };
@@ -161,7 +163,7 @@ export async function translateWithCommunityParser(
     status: "translated",
     blueprintName: blueprint.contractName,
     eventType: sanitizeTextField(result.output.eventType, { maxLength: 64 }),
-    schemaVersion: null,
+    schemaVersion: blueprint.version ?? null,
     parserProvenance: "community-wasm",
   };
 }
