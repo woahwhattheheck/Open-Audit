@@ -1,0 +1,63 @@
+name: Rust example sandbox integration
+
+on:
+  push:
+    branches:
+      - validation/oa455-rust-example-fcb6
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oa455-rust-example-fcb6
+  cancel-in-progress: false
+
+jobs:
+  rust-example:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RUSTUP_TOOLCHAIN: 1.98.1
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - name: Install the Rust target and record versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p rust-example-evidence
+          rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
+          rustc --version --verbose | tee rust-example-evidence/rustc-version.txt
+          cargo --version | tee rust-example-evidence/cargo-version.txt
+          node --version | tee rust-example-evidence/node-version.txt
+          git rev-parse HEAD | tee rust-example-evidence/validation-commit.txt
+          git diff 9befa56850ecb7bbe901119eeb6e916867cd8c4a -- lib/wasm-sandbox/worker.cjs
+          git diff --exit-code 9befa56850ecb7bbe901119eeb6e916867cd8c4a -- lib/wasm-sandbox/worker.cjs lib/wasm-sandbox/examples/rust/src/lib.rs lib/wasm-sandbox/examples/rust/Cargo.toml lib/wasm-sandbox/examples/rust/build.sh
+      - name: Compile the original and repaired example with the documented script
+        shell: bash
+        run: |
+          set -euo pipefail
+          rust_baseline_dir="$(mktemp -d "$RUNNER_TEMP/oa455-rust-baseline.XXXXXX")"
+          git archive 9befa56850ecb7bbe901119eeb6e916867cd8c4a lib/wasm-sandbox/examples/rust | tar -x -C "$rust_baseline_dir"
+          bash "$rust_baseline_dir/lib/wasm-sandbox/examples/rust/build.sh" 2>&1 | tee rust-example-evidence/baseline-build.log
+          cp "$rust_baseline_dir/lib/wasm-sandbox/examples/rust/parser.wasm" rust-example-evidence/baseline.wasm
+          bash lib/wasm-sandbox/examples/rust/build.sh 2>&1 | tee rust-example-evidence/candidate-build.log
+          cp lib/wasm-sandbox/examples/rust/parser.wasm rust-example-evidence/candidate.wasm
+      - name: Run both compiled modules through the unchanged sandbox worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/oa455-rust-example-check.cjs rust-example-evidence/baseline.wasm rust-example-evidence/candidate.wasm lib/wasm-sandbox/worker.cjs | tee rust-example-evidence/results.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: oa455-rust-example-evidence
+          path: rust-example-evidence
+          if-no-files-found: error
+          retention-days: 30
