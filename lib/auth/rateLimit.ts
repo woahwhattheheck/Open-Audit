@@ -86,6 +86,7 @@ export function _clearBuckets(): void {
 }
 
 let warnedFallback = false;
+let warnedRedisError = false;
 function warnInMemoryFallback(reason: string): void {
   if (warnedFallback) return;
   warnedFallback = true;
@@ -231,10 +232,14 @@ export async function checkRateLimit(
     try {
       return await checkRedisRateLimit(hashedKey, tier, now);
     } catch (err) {
-      console.warn(
-        "[rateLimit] Redis rate limiter error, falling back to in-memory:",
-        err
-      );
+      // Preserve the first error diagnostic without logging every failed request.
+      if (!warnedRedisError) {
+        warnedRedisError = true;
+        console.warn(
+          "[rateLimit] Redis rate limiter error, falling back to in-memory:",
+          err
+        );
+      }
       warnInMemoryFallback("Redis command failed");
     }
   }
