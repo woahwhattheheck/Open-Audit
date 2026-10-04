@@ -42,6 +42,7 @@ return {0, count, retryAfter}
  * the sliding window, so the Map does not grow without bound.
  */
 const buckets = new Map<string, number[]>();
+let lastExpiredBucketSweepAt: number | undefined;
 
 /** Remove an expired sorted prefix with at most one compaction. */
 function pruneBucket(bucket: number[], cutoff: number): void {
@@ -75,6 +76,20 @@ export function pruneExpiredBuckets(now: number = Date.now()): void {
   }
 }
 
+/** Bound full-map cleanup to at most once per sliding-window interval. */
+function maybePruneExpiredBuckets(now: number): void {
+  if (
+    lastExpiredBucketSweepAt !== undefined &&
+    now >= lastExpiredBucketSweepAt &&
+    now - lastExpiredBucketSweepAt < WINDOW_MS
+  ) {
+    return;
+  }
+
+  pruneExpiredBuckets(now);
+  lastExpiredBucketSweepAt = now;
+}
+
 /** Count of active bucket keys in memory (for testing/inspection). */
 export function _getBucketsSize(): number {
   return buckets.size;
@@ -83,6 +98,7 @@ export function _getBucketsSize(): number {
 /** Clear in-memory rate limit buckets (for testing). */
 export function _clearBuckets(): void {
   buckets.clear();
+  lastExpiredBucketSweepAt = undefined;
 }
 
 let warnedFallback = false;
@@ -228,6 +244,8 @@ export async function checkRateLimit(
   tier: Tier
 ): Promise<RateLimitResult> {
   const now = Date.now();
+  maybePruneExpiredBuckets(now);
+
   if (isRedisEnabled()) {
     try {
       return await checkRedisRateLimit(hashedKey, tier, now);
