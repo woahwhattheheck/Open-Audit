@@ -24,7 +24,7 @@ jobs:
       - name: Check out the exact submission source
         uses: actions/checkout@v4
         with:
-          ref: ba8332fe15e0e6331b3166aa08d73bf2b3ab2fd4
+          ref: 41d1d5eb061a5294437e7233b43920a66d835988
           persist-credentials: false
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -33,7 +33,7 @@ jobs:
       - name: Record source and runtime
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = ba8332fe15e0e6331b3166aa08d73bf2b3ab2fd4
+          test "$(git rev-parse HEAD)" = 41d1d5eb061a5294437e7233b43920a66d835988
           mkdir -p /tmp/oa453-evidence
           { git rev-parse HEAD; git rev-parse HEAD^{tree}; node --version; npm --version; sha256sum package.json package-lock.json; } | tee /tmp/oa453-evidence/source.txt
       - name: Install the locked dependencies
@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm test -- lib/auth/__tests__/rateLimit.test.ts --pool=forks --maxWorkers=2 --minWorkers=1 2>&1 | tee /tmp/oa453-evidence/focused.log
+          npm test -- lib/auth/__tests__/rateLimit.test.ts lib/auth/__tests__/rateLimit.expiry.test.ts --pool=forks --maxWorkers=2 --minWorkers=1 2>&1 | tee /tmp/oa453-evidence/focused.log
       - name: Run the required application build
         if: success() || steps.focused.outcome == 'failure'
         shell: bash
