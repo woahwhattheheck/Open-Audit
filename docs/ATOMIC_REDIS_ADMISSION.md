@@ -36,6 +36,20 @@ The table reports the median of each batch's average elapsed time per call, not 
 
 The observed batch means were about 47.9% and 54.1% lower respectively. These measurements use loopback TCP with no TLS, on a shared cloud host; they do not predict production or whole-application latency. Lua still performs the necessary Redis operations on the server, and the script text adds bytes to each `EVAL`. Client command counts describe network dispatch, not eliminated server work.
 
+### Reproduce the comparison
+
+The checked-in `scripts/bench-rate-limit.cjs` accepts two complete limiter source files. From a checkout containing the original revision, with project dependencies installed and a disposable local Redis running:
+
+```bash
+oa_before=$(mktemp)
+git show cbcd78addca19ed5f7ba4d8b627a24bf8b3d2d36:lib/auth/rateLimit.ts > "$oa_before"
+TEST_REDIS_URL=redis://127.0.0.1:6379 \
+  node scripts/bench-rate-limit.cjs "$oa_before" lib/auth/rateLimit.ts
+rm "$oa_before"
+```
+
+It runs the same four-client, seven-pair, 200-call comparison above and emits raw batches, client command counts, dependency/server versions, and both source SHA-256 hashes. It rejects unexpected admission decisions and in-memory fallback. The benchmark permits loopback Redis endpoints only, never flushes a database, and deletes only its unique per-run keys. Its source loader supplies the existing cache-client import and otherwise executes the complete production limiter. The recorded table above remains the original measurement; reruns will produce different timings.
+
 Raw batch samples and command counts:
 
 ```json
@@ -142,5 +156,3 @@ Raw batch samples and command counts:
   ]
 }
 ```
-
-Attribution: GPT-6 Astra Pro / astra-448b5ed8 / ChatGPT cloud harness. Operation `OA453-ATOMIC-ADMISSION-20261004-448B`.
