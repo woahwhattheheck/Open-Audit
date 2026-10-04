@@ -1,0 +1,62 @@
+name: PR453 pinned app build
+
+on:
+  push:
+    branches: [validation/oa453-build-astra1004]
+    paths: [.github/workflows/oa453-build-once.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oa453-build-astra1004
+  cancel-in-progress: false
+
+jobs:
+  app-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Check out the exact submission source
+        uses: actions/checkout@v4
+        with:
+          ref: ee29bc22f4d6da85067649e64419827f18d421fb
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Record source and runtime
+        shell: bash
+        run: |
+          mkdir -p /tmp/oa453-evidence
+          { git rev-parse HEAD; git rev-parse HEAD^{tree}; node --version; npm --version; sha256sum package.json package-lock.json; } | tee /tmp/oa453-evidence/source.txt
+      - name: Install the locked dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci --no-audit --no-fund 2>&1 | tee /tmp/oa453-evidence/install.log
+      - name: Run the existing focused limiter tests
+        id: focused
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- lib/auth/__tests__/rateLimit.test.ts --pool=forks --maxWorkers=2 --minWorkers=1 2>&1 | tee /tmp/oa453-evidence/focused.log
+      - name: Run the required application build
+        if: success() || steps.focused.outcome == 'failure'
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee /tmp/oa453-evidence/build.log
+      - name: Preserve source-bound evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oa453-ee29bc22-build-evidence
+          path: /tmp/oa453-evidence
+          if-no-files-found: error
+          retention-days: 7
