@@ -222,5 +222,7 @@ export async function checkRateLimit(
       warnInMemoryFallback("Redis command failed");
     }
   }
-  return checkInMemRateLimit(hashedKey, tier, now);
+  // A Redis failure may arrive much later; evaluate the fallback window when
+  // admission is decided, rather than consuming it while waiting for Redis.
+  return checkInMemRateLimit(hashedKey, tier, Date.now());
 }

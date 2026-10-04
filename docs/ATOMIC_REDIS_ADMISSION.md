@@ -2,6 +2,17 @@
 
 This follow-up belongs to the existing [PR #453](https://github.com/Open-audit-foundation/Open-Audit/pull/453) for issue #418. It preserves the original contribution and the subsequent build/runtime repairs.
 
+## In-memory fallback timing
+
+When a Redis operation fails, the fallback samples the current clock before
+pruning, deciding admission, recording an accepted request and calculating
+`retryAfter`. Its 60-second window begins at fallback admission; time spent
+waiting for Redis does not consume that window or inflate a later retry delay.
+The free/partner limits remain 60/5,000 per minute. Sorted timestamp insertion
+is retained so a backward clock adjustment does not hide expired entries.
+This timing correction does not change the Redis script or the historical
+Redis measurements below.
+
 ## Reproduced defect
 
 At `cbcd78addca19ed5f7ba4d8b627a24bf8b3d2d36`, `checkRedisRateLimit` awaited a prune/count pipeline before sending a separate add/expiry pipeline. Concurrent callers could observe the same remaining slot and all be admitted. On an isolated Redis 7.0.15 server, four independent ioredis clients issuing 32 concurrent calls admitted all 32 while only one slot remained. This reproduced at both the free 60/minute limit and partner 5,000/minute limit.

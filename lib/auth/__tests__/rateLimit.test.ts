@@ -115,7 +115,7 @@ describe("checkRateLimit", () => {
       expect(_getBucketsSize()).toBe(1);
     });
 
-    it("expires older fallback requests even when Redis failures finish out of order", async () => {
+    it("uses fallback admission time when Redis failures finish out of order", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(100_000);
       vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -139,23 +139,87 @@ describe("checkRateLimit", () => {
       rejectOldest(new Error("The oldest Redis request failed last"));
       expect((await oldestRequest).allowed).toBe(true);
 
+      // All sixty fallback admissions happened at 101_000, not Redis start time.
       vi.setSystemTime(160_000);
-      expect(await checkRateLimit("out-of-order-fallback", "free")).toEqual({
-        allowed: true,
-        limit: 60,
-        remaining: 0,
-        retryAfter: undefined,
-      });
       expect(await checkRateLimit("out-of-order-fallback", "free")).toEqual({
         allowed: false,
         limit: 60,
         remaining: 0,
         retryAfter: 1,
       });
-
       vi.setSystemTime(161_000);
-      expect((await checkRateLimit("out-of-order-fallback", "free")).remaining).toBe(58);
+      expect(await checkRateLimit("out-of-order-fallback", "free")).toEqual({
+        allowed: true,
+        limit: 60,
+        remaining: 59,
+        retryAfter: undefined,
+      });
     });
+
+    it("retains timestamp ordering if the fallback clock moves backward", async () => {
+      vi.useFakeTimers();
+      vi.spyOn(redisCache, "isRedisEnabled").mockReturnValue(false);
+      vi.setSystemTime(101_000);
+      for (let i = 0; i < 59; i++) {
+        await checkRateLimit("clock-reversal", "free");
+      }
+      vi.setSystemTime(100_000);
+      expect((await checkRateLimit("clock-reversal", "free")).allowed).toBe(true);
+
+      vi.setSystemTime(160_000);
+      expect((await checkRateLimit("clock-reversal", "free")).allowed).toBe(true);
+      expect(await checkRateLimit("clock-reversal", "free")).toEqual({
+        allowed: false,
+        limit: 60,
+        remaining: 0,
+        retryAfter: 1,
+      });
+    });
+
+    it("rechecks expiry and retry delay after a delayed Redis rejection", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(100_000);
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      let rejectOldest!: (reason: Error) => void;
+      const delayed = new Promise<never>((_resolve, reject) => {
+        rejectOldest = reject;
+      });
+      const client = {
+        eval: vi.fn()
+          .mockRejectedValue(new Error("Redis unavailable"))
+          .mockReturnValueOnce(delayed),
+      };
+      vi.spyOn(redisCache, "getRedisClient").mockReturnValue(client as never);
+      const oldestRequest = checkRateLimit("delayed-decision", "free");
+
+      vi.setSystemTime(160_000);
+      for (let i = 0; i < 60; i++) {
+        expect((await checkRateLimit("delayed-decision", "free")).allowed).toBe(true);
+      }
+      rejectOldest(new Error("Redis rejected after one minute"));
+      expect(await oldestRequest).toEqual({
+        allowed: false,
+        limit: 60,
+        remaining: 0,
+        retryAfter: 60,
+      });
+
+      let rejectRecovery!: (reason: Error) => void;
+      client.eval.mockReturnValueOnce(new Promise<never>((_resolve, reject) => {
+        rejectRecovery = reject;
+      }));
+      const recovery = checkRateLimit("delayed-decision", "free");
+      vi.setSystemTime(220_000);
+      rejectRecovery(new Error("Redis rejected after the stored window expired"));
+      expect(await recovery).toEqual({
+        allowed: true,
+        limit: 60,
+        remaining: 59,
+        retryAfter: undefined,
+      });
+    });
+
   });
 });
 
