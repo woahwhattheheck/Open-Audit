@@ -13,6 +13,26 @@ is retained so a backward clock adjustment does not hide expired entries.
 This timing correction does not change the Redis script or the historical
 Redis measurements below.
 
+## Required checks on the timing correction
+
+On October 4, 2026, [native job 111408536802](https://github.com/woahwhattheheck/Open-Audit/actions/runs/37192857987/job/111408536802)
+completed successfully on Ubuntu 24.04, Node 24.21.0, npm 11.19.0 and Vitest 3.2.7.
+The checkout assertion and logs identify product commit
+`ba8332fe15e0e6331b3166aa08d73bf2b3ab2fd4`, tree
+`7e321f0abcfceb8210931689545f7fc1913b4bbc`.
+
+- `npm ci --no-audit --no-fund`: passed with the unchanged lockfile.
+- `npm test -- lib/auth/__tests__/rateLimit.test.ts --pool=forks --maxWorkers=2 --minWorkers=1`:
+  **15 passed, 3 skipped**. All three fallback timing regressions ran. The skipped
+  cases are the existing optional live-Redis integration cases.
+- `npm run build`: passed, including TypeScript checking and 22/22 static pages.
+
+The complete job took 59 seconds. Dependency deprecation notices and the existing
+Turbopack file-tracing warning remain; no runtime deployment or full repository
+test-suite result is claimed. The earlier real-Redis measurements below retain
+their original source identity. Subsequent documentation-only commits do not
+change the executed application or test source.
+
 ## Reproduced defect
 
 At `cbcd78addca19ed5f7ba4d8b627a24bf8b3d2d36`, `checkRedisRateLimit` awaited a prune/count pipeline before sending a separate add/expiry pipeline. Concurrent callers could observe the same remaining slot and all be admitted. On an isolated Redis 7.0.15 server, four independent ioredis clients issuing 32 concurrent calls admitted all 32 while only one slot remained. This reproduced at both the free 60/minute limit and partner 5,000/minute limit.
