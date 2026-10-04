@@ -27,6 +27,25 @@ describe("WasmSandboxRunner happy path", () => {
     }
   });
 
+  it("reads in-place output before deallocating its input buffer", async () => {
+    const result = await runner.execute(
+      loadFixture("in_place_output.wasm"),
+      SAMPLE_EVENT_INPUT
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toEqual({
+        description: "In-place parser output",
+        eventType: "transfer",
+      });
+      // The fixture overwrites input and grows memory in dealloc, so this also
+      // proves cleanup still executes after the host consumes the output.
+      expect(result.stats.peakMemoryBytes).toBe(2 * 64 * 1024);
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+
   it("serializes input only once for validation and execution", async () => {
     let serializations = 0;
     const input = {

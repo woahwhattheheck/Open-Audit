@@ -78,6 +78,11 @@ without a maximum must be rebuilt with an explicit bound before registration.
 Both fields are required non-empty strings. Output larger than the host cap
 (default 64 KiB) is rejected.
 
+The output may reuse the input allocation. After `translate` returns, the host
+reads `get_output_len` and copies the bounded output into a host-owned string
+before calling optional `dealloc(in_ptr, in_len)`. Cleanup is best-effort and may
+overwrite the input or grow memory without changing the already-read result.
+
 ## Manifest (file-based registration)
 
 ```json
