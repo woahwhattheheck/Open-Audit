@@ -69,6 +69,34 @@ describe("WASM sandbox adversarial suite (#405)", () => {
     }
   });
 
+  it("rejects signed output pointers that would alias the end of memory", async () => {
+    const bytes = loadFixture("negative_output_pointer.wasm");
+    // The module is valid, but its i32 -128 is address 0xffffff80, not an
+    // end-relative Buffer offset into the JSON stored at byte 65408.
+    await expect(WebAssembly.compile(bytes)).resolves.toBeDefined();
+    const result = await runner.execute(bytes, SAMPLE_EVENT_INPUT);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.errorType).toBe("RUNTIME_TRAP");
+      expect(result.error.message).toMatch(/output range/);
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+
+  it("rejects non-i32 output pointers before unsigned coercion can wrap them", async () => {
+    const bytes = loadFixture("non_i32_output_pointer.wasm");
+    // A valid WASM f64 export returns 2^32 + 1024; blindly applying >>> 0
+    // would turn that malformed ABI return into the valid JSON offset 1024.
+    await expect(WebAssembly.compile(bytes)).resolves.toBeDefined();
+    const result = await runner.execute(bytes, SAMPLE_EVENT_INPUT);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.errorType).toBe("RUNTIME_TRAP");
+      expect(result.error.message).toMatch(/non-i32 output pointer/);
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+
   it("rejects malformed guest output", async () => {
     const result = await runner.execute(
       loadFixture("malformed_output.wasm"),

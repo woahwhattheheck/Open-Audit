@@ -78,6 +78,12 @@ without a maximum must be rebuilt with an explicit bound before registration.
 Both fields are required non-empty strings. Output larger than the host cap
 (default 64 KiB) is rejected.
 
+The `translate` result must be an `i32` pointer. The host interprets its bit
+pattern as an unsigned wasm32 address and checks the complete output range
+against linear memory before reading. A negative JavaScript representation is
+never a relative offset from the end of memory. Nonintegral values and values
+outside the signed i32 range are rejected before address conversion.
+
 The output may reuse the input allocation. After `translate` returns, the host
 reads `get_output_len` and copies the bounded output into a host-owned string
 before calling optional `dealloc(in_ptr, in_len)`. Cleanup is best-effort and may
