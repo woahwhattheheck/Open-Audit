@@ -97,6 +97,20 @@ describe("WASM sandbox adversarial suite (#405)", () => {
     }
   });
 
+  it("rejects output lengths before integer coercion can hide an oversized claim", async () => {
+    const bytes = loadFixture("non_i32_output_length.wasm");
+    // A valid WASM f64 export returns 2^32 + 39. Coercing it with | 0
+    // would hide the oversized claim and accept the 39-byte JSON sentinel.
+    await expect(WebAssembly.compile(bytes)).resolves.toBeDefined();
+    const result = await runner.execute(bytes, SAMPLE_EVENT_INPUT);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.errorType).toBe("INVALID_OUTPUT");
+      expect(result.error.message).toMatch(/non-i32 output length/);
+      expect(result.stats.timedOut).toBe(false);
+    }
+  });
+
   it("rejects malformed guest output", async () => {
     const result = await runner.execute(
       loadFixture("malformed_output.wasm"),

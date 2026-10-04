@@ -84,6 +84,12 @@ against linear memory before reading. A negative JavaScript representation is
 never a relative offset from the end of memory. Nonintegral values and values
 outside the signed i32 range are rejected before address conversion.
 
+The `get_output_len` result is validated before any integer conversion.
+Fractional values and values outside the signed i32 range return
+`INVALID_OUTPUT`; they cannot wrap or truncate into a small accepted length.
+The existing positive-length, output-size and linear-memory range checks then
+apply to the original value.
+
 The output may reuse the input allocation. After `translate` returns, the host
 reads `get_output_len` and copies the bounded output into a host-owned string
 before calling optional `dealloc(in_ptr, in_len)`. Cleanup is best-effort and may
@@ -153,3 +159,30 @@ node --test lib/wasm-sandbox/__tests__/table-limit-cases.cjs
       community-sourced in the product
 
 See `WASM_SANDBOX_ARCHITECTURE.md` for the full threat model.
+
+## Output-length validation result (2026-10-04)
+
+The worker validates the original `get_output_len` value before size and range
+checks. With the preceding worker blob
+`c9c300c819d93a62fcc415f077d76418bf51ad46`, a valid 165-byte module returning
+the f64 length `4294967335` was accepted as a 39-byte JSON result. The same
+real-Worker replay accepts an ordinary i32 length of 39 and, after this repair,
+rejects the malformed length as `INVALID_OUTPUT`. Fractional `39.5` and
+negative `-4294967257` replay controls are rejected by the same validation.
+
+The maintained adversarial file, including the new committed length fixture,
+passed **11/11**, zero failed or skipped, on Node 24.19.0 and retained
+Vitest 4.1.10. Command:
+
+```bash
+node node_modules/vitest/vitest.mjs run --config vitest.wasm.config.ts \
+  lib/wasm-sandbox/__tests__/adversarial.test.ts --maxWorkers=1
+```
+
+The local config only relocated the Vite cache into writable temporary storage.
+No assertions or timeouts were changed. A preliminary baseline Vitest selection
+hit its existing 400 ms worker timeout; the causal before/after result above
+comes from the separate real-Worker replay, not that timeout. The declared
+Vitest range is `^3.2.7`; locked-dependency, registry, full-application and hosted
+CI acceptance were not rerun or claimed. This is validation of malformed output
+handling, not a throughput or total-memory-isolation measurement.
