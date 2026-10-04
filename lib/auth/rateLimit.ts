@@ -43,14 +43,32 @@ return {0, count, retryAfter}
  */
 const buckets = new Map<string, number[]>();
 
+/** Remove an expired sorted prefix with at most one compaction. */
+function pruneBucket(bucket: number[], cutoff: number): void {
+  if (bucket.length === 0 || !(bucket[0] <= cutoff)) return;
+  if (bucket[bucket.length - 1] <= cutoff) {
+    bucket.length = 0;
+    return;
+  }
+
+  // Find the first timestamp strictly inside the window. Equal timestamps
+  // expire together, including after a backward clock adjustment.
+  let low = 1;
+  let high = bucket.length - 1;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (bucket[middle] <= cutoff) low = middle + 1;
+    else high = middle;
+  }
+  bucket.splice(0, low);
+}
+
 /**
  * Prune all empty or fully expired bucket entries from the in-memory Map.
  */
 export function pruneExpiredBuckets(now: number = Date.now()): void {
   for (const [key, bucket] of buckets.entries()) {
-    while (bucket.length > 0 && bucket[0] <= now - WINDOW_MS) {
-      bucket.shift();
-    }
+    pruneBucket(bucket, now - WINDOW_MS);
     if (bucket.length === 0) {
       buckets.delete(key);
     }
@@ -99,9 +117,7 @@ function checkInMemRateLimit(
   let bucket = buckets.get(hashedKey);
 
   if (bucket) {
-    while (bucket.length > 0 && bucket[0] <= now - WINDOW_MS) {
-      bucket.shift();
-    }
+    pruneBucket(bucket, now - WINDOW_MS);
     if (bucket.length === 0) {
       buckets.delete(hashedKey);
       bucket = undefined;
