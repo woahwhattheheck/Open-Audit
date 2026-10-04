@@ -24,7 +24,7 @@ jobs:
       - name: Check out the exact submission source
         uses: actions/checkout@v4
         with:
-          ref: ee29bc22f4d6da85067649e64419827f18d421fb
+          ref: ba8332fe15e0e6331b3166aa08d73bf2b3ab2fd4
           persist-credentials: false
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -33,6 +33,7 @@ jobs:
       - name: Record source and runtime
         shell: bash
         run: |
+          test "$(git rev-parse HEAD)" = ba8332fe15e0e6331b3166aa08d73bf2b3ab2fd4
           mkdir -p /tmp/oa453-evidence
           { git rev-parse HEAD; git rev-parse HEAD^{tree}; node --version; npm --version; sha256sum package.json package-lock.json; } | tee /tmp/oa453-evidence/source.txt
       - name: Install the locked dependencies
@@ -52,11 +53,3 @@ jobs:
         run: |
           set -o pipefail
           npm run build 2>&1 | tee /tmp/oa453-evidence/build.log
-      - name: Preserve source-bound evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: oa453-ee29bc22-build-evidence
-          path: /tmp/oa453-evidence
-          if-no-files-found: error
-          retention-days: 7
