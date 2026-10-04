@@ -53,6 +53,20 @@ describe("fallback expiry compaction", () => {
     }
   );
 
+  it("cleans expired fallback keys after Redis recovers", async () => {
+    await checkRateLimit("outage-only", "free");
+    expect(_getBucketsSize()).toBe(1);
+
+    vi.setSystemTime(160_001);
+    vi.mocked(redisCache.isRedisEnabled).mockReturnValue(true);
+    vi.spyOn(redisCache, "getRedisClient").mockReturnValue({
+      eval: vi.fn().mockResolvedValue([1, 1, 0]),
+    } as never);
+
+    expect((await checkRateLimit("redis-recovered", "free")).allowed).toBe(true);
+    expect(_getBucketsSize()).toBe(0);
+  });
+
   it("keeps live timestamps when an explicit prune time is NaN or negative infinity", async () => {
     await checkRateLimit("invalid-time", "free");
     pruneExpiredBuckets(Number.NaN);
