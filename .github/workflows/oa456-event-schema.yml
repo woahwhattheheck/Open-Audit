@@ -10,7 +10,6 @@ jobs:
     timeout-minutes: 10
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      EVIDENCE: ${{ runner.temp }}/oa456-format
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/oa456-format"
           mkdir -p "$EVIDENCE"
           FILE=lib/openapi/__tests__/event-responses.test.ts
           cp "$FILE" "$EVIDENCE/before.ts"
