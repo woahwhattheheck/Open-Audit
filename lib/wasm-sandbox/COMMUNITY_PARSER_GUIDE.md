@@ -38,6 +38,20 @@ the host limit returns `MEMORY_LIMIT_EXCEEDED` before memory allocation.
 Only unshared 32-bit memory is supported; shared memory, memory64, and additional
 defined memories are rejected.
 
+Defined tables are allowed for indirect calls, but every table must declare an
+explicit maximum, for example `(table 1 16 funcref)`. The worker admits at most
+32 tables whose **combined maxima** are at most 65,536 reference slots. These are
+fixed host ceilings, independent of the linear-memory page budget. Unbounded or
+over-budget tables return `MEMORY_LIMIT_EXCEEDED` before instantiation or a start
+function can run; checking only a table's initial size is insufficient.
+
+The supported table encoding is the ordinary nullable `funcref` or `externref`
+short form with unshared 32-bit limits. Extended reference encodings, GC table
+types, custom table initializers, table64 and shared tables are not part of this
+ABI and are rejected. Ordinary bounded indirect calls and `table.grow` within
+the declared maximum remain supported. A parser compiled with a growable table
+without a maximum must be rebuilt with an explicit bound before registration.
+
 ### Input JSON (`WasmParserInput`)
 
 ```json
@@ -94,10 +108,15 @@ Translated events carry `parserProvenance: "community-wasm"`.
 
 | Limit | Default |
 |-------|---------|
-| Memory | 16 MiB (256 × 64 KiB pages) |
+| Linear memory | 16 MiB (256 × 64 KiB pages) |
+| Defined tables | 32 tables / 65,536 aggregate maximum slots (fixed) |
 | Wall time | 1000 ms |
 | Input | 256 KiB |
 | Output | 64 KiB |
+
+These are per-execution resource-specific limits, not a total process-memory
+budget. `peakMemoryBytes` reports linear memory only; table storage and runtime
+allocations are not included. See the architecture's residual risks.
 
 ## Local verify
 
@@ -107,12 +126,16 @@ node lib/wasm-sandbox/fixtures/compile-fixtures.mjs
 
 # Full adversarial + integration suite
 npm run test:wasm
+
+# Narrow table-boundary cases, same cases included by the Vitest suite
+node --test lib/wasm-sandbox/__tests__/table-limit-cases.cjs
 ```
 
 ## Security checklist before opening a PR
 
 - [ ] Module imports **only** `env.memory`
 - [ ] No WASI, no `fs`, no `http`, no JS glue imports
+- [ ] Every defined table has a maximum and fits the aggregate table ceilings
 - [ ] `npm run test:wasm` passes on your machine
 - [ ] Manifest points at the committed `.wasm`
 - [ ] You understand descriptions are attacker-chosen text and will be labeled
