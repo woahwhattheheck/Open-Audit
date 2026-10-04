@@ -59,12 +59,12 @@ export class WasmSandboxRunner {
     let timedOut = false;
 
     try {
-      this.validateInput(input);
+      const inputJson = this.validateInput(input);
       const bytes = await this.loadBytes(wasm);
 
       const workerResult = await this.runInWorker(
         bytes,
-        JSON.stringify(input),
+        inputJson,
         this.limits.maxExecutionTimeMs
       );
       peakMemoryBytes = workerResult.peakMemoryBytes;
@@ -150,7 +150,7 @@ export class WasmSandboxRunner {
     return bytes;
   }
 
-  private validateInput(input: WasmParserInput): void {
+  private validateInput(input: WasmParserInput): string {
     if (!input || typeof input !== "object") {
       throw new WasmExecutionError("Input must be an object", "INVALID_INPUT");
     }
@@ -163,13 +163,16 @@ export class WasmSandboxRunner {
     if (typeof input.data !== "string") {
       throw new WasmExecutionError("data must be a string", "INVALID_INPUT");
     }
-    const size = Buffer.byteLength(JSON.stringify(input), "utf8");
+    // Snapshot before any await: the worker must execute the same bytes we cap.
+    const inputJson = JSON.stringify(input);
+    const size = Buffer.byteLength(inputJson, "utf8");
     if (size > this.limits.maxInputBytes) {
       throw new WasmExecutionError(
         `Input size (${size}) exceeds max (${this.limits.maxInputBytes})`,
         "INVALID_INPUT"
       );
     }
+    return inputJson;
   }
 
   private validateOutput(raw: unknown): WasmParserOutput {

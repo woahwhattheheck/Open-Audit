@@ -27,6 +27,36 @@ describe("WasmSandboxRunner happy path", () => {
     }
   });
 
+  it("serializes input only once for validation and execution", async () => {
+    let serializations = 0;
+    const input = {
+      ...SAMPLE_EVENT_INPUT,
+      toJSON() {
+        serializations += 1;
+        if (serializations > 1) throw new Error("Input was serialized twice");
+        return SAMPLE_EVENT_INPUT;
+      },
+    };
+
+    const result = await runner.execute(loadFixture("echo_parser.wasm"), input);
+    expect(result.success).toBe(true);
+    expect(serializations).toBe(1);
+  });
+
+  it("executes the size-checked snapshot when input changes during loading", async () => {
+    const input = { ...SAMPLE_EVENT_INPUT };
+    const pending = runner.execute(loadFixture("echo_parser.wasm"), input);
+    // execute has validated the input, then yielded while loading the bytes.
+    // Re-serializing here would bypass the host cap and overflow guest memory.
+    input.data = "x".repeat(300 * 1024);
+
+    const result = await pending;
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output.eventType).toBe("transfer");
+    }
+  });
+
   it("rejects oversized input before spawning a worker", async () => {
     const big = {
       ...SAMPLE_EVENT_INPUT,
