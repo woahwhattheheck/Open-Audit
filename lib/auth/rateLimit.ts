@@ -11,6 +11,31 @@ const RATE_LIMIT_KEY_PREFIX = "oa:rl:";
 const WINDOW_MS = 60_000;
 const WINDOW_SECONDS = 60;
 
+// Keep the decision and admission in one Redis operation. Pipelining the count
+// and write separately lets concurrent callers all consume the same last slot.
+const REDIS_SLIDING_WINDOW_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+local count = redis.call('ZCARD', key)
+
+if count < limit then
+  redis.call('ZADD', key, now, ARGV[4])
+  redis.call('EXPIRE', key, tonumber(ARGV[5]))
+  return {1, count + 1, 0}
+end
+
+local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+local retryAfter = tonumber(ARGV[5])
+if #oldest >= 2 then
+  retryAfter = math.max(1, math.ceil((tonumber(oldest[2]) + window - now) / 1000))
+end
+return {0, count, retryAfter}
+`;
+
 /**
  * In-memory fallback store: hashedKey -> timestamps of recent requests.
  * Entries are created on demand and removed when all timestamps fall outside
@@ -108,7 +133,7 @@ function checkInMemRateLimit(
 
 /**
  * Redis sorted-set sliding window (shared across instances).
- * Uses a short pipeline for prune+count, then a second pipeline to record.
+ * Atomically prunes, checks and admits a request, with one network round trip.
  */
 async function checkRedisRateLimit(
   hashedKey: string,
@@ -122,58 +147,37 @@ async function checkRedisRateLimit(
 
   const limit = TIER_LIMITS[tier];
   const key = `${RATE_LIMIT_KEY_PREFIX}${hashedKey}`;
-  const clearBefore = now - WINDOW_MS;
-  const member = `${now}:${Math.random().toString(36).substring(2, 9)}`;
+  const member = `${now}:${globalThis.crypto.randomUUID()}`;
+  const result = await redis.eval(
+    REDIS_SLIDING_WINDOW_SCRIPT,
+    1,
+    key,
+    now,
+    WINDOW_MS,
+    limit,
+    member,
+    WINDOW_SECONDS
+  );
 
-  const pipeline = redis.pipeline();
-  pipeline.zremrangebyscore(key, 0, clearBefore);
-  pipeline.zcard(key);
-  const results = await pipeline.exec();
-
-  if (!results || results.length !== 2) {
-    throw new Error("Redis count pipeline returned incomplete results");
-  }
-  for (const [error] of results) {
-    if (error) throw error;
-  }
-
-  const currentCount = results[1][1] as number;
-  if (!Number.isInteger(currentCount) || currentCount < 0) {
-    throw new Error("Redis returned an invalid rate-limit count");
-  }
-  const allowed = currentCount < limit;
-
-  if (allowed) {
-    const addPipeline = redis.pipeline();
-    addPipeline.zadd(key, now, member);
-    addPipeline.expire(key, WINDOW_SECONDS);
-    const writeResults = await addPipeline.exec();
-    if (!writeResults || writeResults.length !== 2) {
-      throw new Error("Redis write pipeline returned incomplete results");
-    }
-    for (const [error] of writeResults) {
-      if (error) throw error;
-    }
+  if (
+    !Array.isArray(result) ||
+    result.length !== 3 ||
+    (result[0] !== 0 && result[0] !== 1) ||
+    !Number.isInteger(result[1]) ||
+    result[1] < 0 ||
+    !Number.isInteger(result[2]) ||
+    result[2] < 0
+  ) {
+    throw new Error("Redis returned an invalid rate-limit result");
   }
 
-  const newCount = allowed ? currentCount + 1 : currentCount;
-  const remaining = Math.max(0, limit - newCount);
-
-  let retryAfter: number | undefined;
-  if (!allowed) {
-    const oldestScores = await redis.zrange(key, 0, 0, "WITHSCORES");
-    if (oldestScores && oldestScores.length >= 2) {
-      const oldestTs = parseFloat(oldestScores[1]);
-      retryAfter = Math.ceil((oldestTs + WINDOW_MS - now) / 1000);
-    } else {
-      retryAfter = WINDOW_SECONDS;
-    }
-  }
+  const [admitted, currentCount, retryAfter] = result as [number, number, number];
+  const allowed = admitted === 1;
 
   return {
     allowed,
     limit,
-    remaining,
+    remaining: Math.max(0, limit - currentCount),
     retryAfter: allowed ? undefined : Math.max(1, retryAfter ?? WINDOW_SECONDS),
   };
 }
