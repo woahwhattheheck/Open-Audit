@@ -1,0 +1,60 @@
+name: OpenAPI event response acceptance
+on:
+  push:
+    branches: [validation/oa456-event-schema-larch-20261004]
+permissions:
+  contents: read
+jobs:
+  response-schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install locked repository dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Reproduce and verify the actual response contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVIDENCE="$RUNNER_TEMP/oa456-evidence"
+          mkdir -p "$EVIDENCE"
+          node --version | tee "$EVIDENCE/node-version.txt"
+          npm ls --depth=0 > "$EVIDENCE/dependencies.txt"
+          git rev-parse HEAD | tee "$EVIDENCE/source-commit.txt"
+          git hash-object lib/openapi/schemas.ts lib/openapi/__tests__/event-responses.test.ts package-lock.json | tee "$EVIDENCE/source-blobs.txt"
+          cp lib/openapi/schemas.ts "$RUNNER_TEMP/oa456-schema-candidate.ts"
+          trap 'cp "$RUNNER_TEMP/oa456-schema-candidate.ts" lib/openapi/schemas.ts' EXIT
+          git show 52ea15328c8c90a36b7655fc632b8756108afb8e:lib/openapi/schemas.ts > lib/openapi/schemas.ts
+          set +e
+          npm exec -- vitest run lib/openapi/__tests__/event-responses.test.ts --maxWorkers=1 --reporter=json --outputFile="$EVIDENCE/before.json" > "$EVIDENCE/before.log" 2>&1
+          BEFORE=$?
+          set -e
+          cat "$EVIDENCE/before.log"
+          test "$BEFORE" -eq 1
+          node -e 'const r=require(process.argv[1]); console.log("BEFORE",r.numPassedTests,r.numFailedTests); if(r.numFailedTests!==2 || r.numTotalTests!==2) process.exit(1)' "$EVIDENCE/before.json"
+          cp "$RUNNER_TEMP/oa456-schema-candidate.ts" lib/openapi/schemas.ts
+          npm exec -- vitest run lib/openapi/__tests__/event-responses.test.ts lib/openapi/__tests__/openapi-spec.test.ts app/api/v1/events/export/route.test.ts --maxWorkers=1 --reporter=json --outputFile="$EVIDENCE/after.json" > "$EVIDENCE/after.log" 2>&1
+          cat "$EVIDENCE/after.log"
+          node -e 'const r=require(process.argv[1]); console.log("AFTER",r.numPassedTests,r.numFailedTests,r.numPendingTests); if(r.numFailedTests || r.numPendingTests) process.exit(1)' "$EVIDENCE/after.json"
+          npm exec -- prettier --check lib/openapi/schemas.ts lib/openapi/__tests__/event-responses.test.ts
+          git diff --exit-code
+          sha256sum "$EVIDENCE"/* > "$RUNNER_TEMP/oa456-evidence.sha256"
+          cat "$RUNNER_TEMP/oa456-evidence.sha256"
+      - name: Retain actual results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oa456-event-response-evidence
+          path: |
+            ${{ runner.temp }}/oa456-evidence
+            ${{ runner.temp }}/oa456-evidence.sha256
+          if-no-files-found: warn
+          retention-days: 7
