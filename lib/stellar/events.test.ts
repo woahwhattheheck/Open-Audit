@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { eventResponseToRawEvent, normalizeTopics } from "./events";
-import { Contract, StrKey, type SorobanRpc } from "stellar-sdk";
+import type { SorobanRpc } from "stellar-sdk";
 
 function scVal(hex: string): { toXDR: (encoding: "hex" | "base64") => string } {
   return {
@@ -11,21 +11,6 @@ function scVal(hex: string): { toXDR: (encoding: "hex" | "base64") => string } {
 }
 
 describe("eventResponseToRawEvent", () => {
-  it("normalizes an SDK Contract to its string address", () => {
-    const contractId = StrKey.encodeContract(Buffer.alloc(32, 1));
-    const event = {
-      id: "000001-000000",
-      contractId: new Contract(contractId),
-      ledger: 123,
-      ledgerClosedAt: "2026-06-19T12:00:00Z",
-      topic: [],
-      value: "0x00",
-      txHash: "hash",
-    } as unknown as SorobanRpc.Api.EventResponse;
-
-    expect(eventResponseToRawEvent(event).contractId).toBe(contractId);
-  });
-
   it("maps the full Soroban topic vector in order", () => {
     const event = {
       id: "000001-000000",

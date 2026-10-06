@@ -104,9 +104,8 @@ function TreeNode({
         {isReentrancyNode && isOnReentrancyPath && (
           <AlertTriangle
             className="h-4 w-4 shrink-0 text-red-500"
-          >
-            <title>Reentrancy detected</title>
-          </AlertTriangle>
+            title="Reentrancy detected"
+          />
         )}
 
         {/* Kind badge */}
